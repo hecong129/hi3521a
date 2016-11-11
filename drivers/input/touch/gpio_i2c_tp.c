@@ -34,9 +34,9 @@
 #include <linux/platform_data/atmel.h>
 
 #include "gpio_i2c.h" 
-spinlock_t  gpioi2c_lock;
 static DECLARE_WAIT_QUEUE_HEAD(interrupt_wait);
 static int condition = 0;
+spinlock_t gpioi2c_lock;
 
 /*
 change log :
@@ -194,64 +194,9 @@ static void  i2c_set(unsigned char whichline)
  //  ·­×ª5±¶
  void time_delay_us(unsigned int usec)
 {
-
 	udelay(1);
-	/*
-	//FPGA: 25MHZ
-	for(i=0;i<usec * 5;i++)
-	{
-		for(j=0;j<47;j++)
-		{;}
-	}
-
-    */
-    //ASIC: 155MHZ   
-    //AP = 155/25 = 6.2
-    /*
-   	for(i = 0; i < 60; i++)
-    {
-        for(j = 0; j < 60; j++);
-    }
-    */
 }
 
-//------------------------------------add for 9024---------------------
-/*
-add for sil9024
-*/
-//------------------------------------------------------------------------------
-// Function Name:  siiReadSegmentBlockEDID
-// Function Description: Reads segment block of EDID from HDMI Downstream Device
-//------------------------------------------------------------------------------
-char siiReadSegmentBlockEDID(char SlaveAddr, char Segment, char Offset, char *Buffer, char Length)
-{
-
-	   //I2CSendAddr(EDID_SEG_ADDR);
-     //i2c_stop_bit();
-     
-	   //I2CSendByte(Segment);
-     //i2c_stop_bit()
-
-	
-     //I2CSendAddr(SlaveAddr);
-     //i2c_stop_bit();
-
-
-	   //I2CSendByte(Offset);
-     //i2c_stop_bit();
-
-	   //I2CSendAddr (SlaveAddr|1);
-		 //I2CSendStop();
-
-    	//for (i = 0; i < Length - 1; i++)
-   		//Buffer[i] = I2CGetByte(NOT_LAST_BYTE);
-   		//Buffer[i] = I2CGetByte(LAST_BYTE);
-   		  //Buffer[i] = i2c_data_read(NOT_LAST_BYTE);
-        //Buffer[i] = i2c_data_read(LAST_BYTE);
-        //i2c_stop_bit();
-     
-        return 1;
-}
 /* 
  * I2C by GPIO simulated  read data routine.
  *
@@ -420,7 +365,6 @@ static int i2c_receive_ack(void)
 }
 
 
-#if 1
 void i2c_send_ack(int ack)
 {
     DELAY(1);
@@ -436,23 +380,6 @@ void i2c_send_ack(int ack)
     DELAY(1);
 }
 
-#else
-void i2c_send_ack(int ack)
-{
-	unsigned char regvalue;
-
-		regvalue = HW_REG(GPIO_SDA_DIR);
-		regvalue |= (SDA);
-		HW_REG(GPIO_SDA_DIR) = regvalue;
-		
-		ack ? i2c_set(SDA) : i2c_clr(SDA);
-		DELAY(2);
-		i2c_set(SCL);
-		DELAY(2);
-		i2c_clr(SCL);
-		DELAY(2);
-}
-#endif
 
 unsigned char gpio_i2ctp_read(unsigned char devaddress, unsigned char addressh,unsigned char addressl)
 {
@@ -523,7 +450,6 @@ static void gpio_i2ctp_write(unsigned char devaddress, unsigned char addressh,un
    spin_unlock(&gpioi2c_lock);
 } 
 
-EXPORT_SYMBOL(gpio_i2ctp_read_buf);
 void gpio_i2ctp_read_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
 {
 	int i = 0;
@@ -570,8 +496,6 @@ i = 0;
 }
 
 
-
-EXPORT_SYMBOL(gpio_i2ctp_write_buf);
 void gpio_i2ctp_write_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
 {
 	int i= 0;

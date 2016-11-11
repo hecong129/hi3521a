@@ -19,24 +19,441 @@
 	{ printk(KERN_INFO "%s %d",__FUNCTION__,__LINE__);\
 		printk(KERN_INFO fmt);}
 
-spinlock_t  gpioi2c_lock;
 
-void gpio_i2ctp_read_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size);
+#define		MINI_GPIO_I2C		1
 
-void gpio_i2ctp_write_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size);
+#if MINI_GPIO_I2C
+#define GPIO_SCL_BASE				0x121B0000
+#define GPIO_SDA_BASE				0x121B0000
+#define SCL_SHIFT_NUM   			3
+#define SDA_SHIFT_NUM   			2
+#define SCL							(0x1 << SCL_SHIFT_NUM)   
+#define SDA							(0x1 << SDA_SHIFT_NUM)    
+#define GPIO_I2C_SCL_REG    		IO_ADDRESS(GPIO_SCL_BASE + (0x1<<(SCL_SHIFT_NUM+2)))  
+#define GPIO_I2C_SDA_REG    		IO_ADDRESS(GPIO_SDA_BASE + (0x1<<(SDA_SHIFT_NUM+2)))  
+#define GPIO_SCL_DIR				IO_ADDRESS( GPIO_SCL_BASE + 0x400)
+#define GPIO_SDA_DIR				IO_ADDRESS( GPIO_SDA_BASE + 0x400)
+#define HW_REG(reg)         		*((volatile unsigned int *)(reg))
+#define DELAY(us)           		time_delay_us(us)
 
+spinlock_t gpioi2c_lock;
+
+void hi35xx_wr(unsigned int phy_reg, unsigned int val)
+{
+	*((volatile unsigned int *)IO_ADDRESS(phy_reg)) = (val);
+}
+
+unsigned int  hi35xx_rd(unsigned int phy_reg)
+{
+	return *((volatile unsigned int *)IO_ADDRESS(phy_reg));
+}
+
+static void i2c_clr(unsigned char whichline)
+{
+	unsigned char regvalue;
+	
+	if(whichline == SCL)
+	{
+		regvalue = HW_REG(GPIO_SCL_DIR);
+		regvalue |= SCL;
+		HW_REG(GPIO_SCL_DIR) = regvalue;
+		
+		HW_REG(GPIO_I2C_SCL_REG) = 0;
+		return;
+	}
+	else if(whichline == SDA)
+	{
+		regvalue = HW_REG(GPIO_SDA_DIR);
+		regvalue |= SDA;
+		HW_REG(GPIO_SDA_DIR) = regvalue;
+		HW_REG(GPIO_I2C_SDA_REG) = 0;
+		return;
+	}
+	else if(whichline == (SDA|SCL))
+	{
+		regvalue = HW_REG(GPIO_SCL_DIR);
+		regvalue |= SCL;
+		HW_REG(GPIO_SCL_DIR) = regvalue;		
+		HW_REG(GPIO_I2C_SCL_REG) = 0;
+		
+		regvalue = HW_REG(GPIO_SDA_DIR);
+		regvalue |= SDA;
+		HW_REG(GPIO_SDA_DIR) = regvalue;		
+		HW_REG(GPIO_I2C_SDA_REG) = 0;
+		return;
+	}
+	else
+	{
+		printk("Error input.\n");
+		return;
+	}
+	
+}
+
+static void  i2c_set(unsigned char whichline)
+{
+	unsigned char regvalue;
+	
+	if(whichline == SCL)
+	{
+		regvalue = HW_REG(GPIO_SCL_DIR);
+		regvalue |= SCL;
+		HW_REG(GPIO_SCL_DIR) = regvalue;
+		
+		HW_REG(GPIO_I2C_SCL_REG) = SCL;
+		return;
+	}
+	else if(whichline == SDA)
+	{
+		regvalue = HW_REG(GPIO_SDA_DIR);
+		regvalue |= SDA;
+		HW_REG(GPIO_SDA_DIR) = regvalue;
+		
+		HW_REG(GPIO_I2C_SDA_REG) = SDA;
+		return;
+	}
+	else if(whichline == (SDA|SCL))
+	{
+		regvalue = HW_REG(GPIO_SCL_DIR);
+		regvalue |= SCL;
+		HW_REG(GPIO_SCL_DIR) = regvalue;
+		
+		HW_REG(GPIO_I2C_SCL_REG) = SCL;
+		
+		regvalue = HW_REG(GPIO_SDA_DIR);
+		regvalue |= SDA;
+		HW_REG(GPIO_SDA_DIR) = regvalue;
+		
+		HW_REG(GPIO_I2C_SDA_REG) = SDA;
+		return;
+	}
+	else
+	{
+		printk("Error input.\n");
+		return;
+	}
+}
+
+void time_delay_us(unsigned int usec)
+{
+	udelay(1);
+}
+
+static unsigned char i2c_data_read(void)
+{
+	unsigned char regvalue;
+	
+	regvalue = HW_REG(GPIO_SDA_DIR);
+	regvalue &= (~SDA);
+	HW_REG(GPIO_SDA_DIR) = regvalue;
+	DELAY(1);
+		
+	regvalue = HW_REG(GPIO_I2C_SDA_REG);
+	if((regvalue&SDA) != 0)
+		return 1;
+	else
+		return 0;
+}
+
+static void i2c_start_bit(void)
+{
+        DELAY(1);
+       	i2c_set(SDA | SCL);
+       	DELAY(1);
+        i2c_clr(SDA);
+        DELAY(1);
+}
+
+static void i2c_stop_bit(void)
+{
+        /* clock the ack */
+        DELAY(1);
+        i2c_set(SCL);
+        DELAY(1); 
+        i2c_clr(SCL);  
+
+        /* actual stop bit */
+        DELAY(1);
+        i2c_clr(SDA);
+        DELAY(1);
+        i2c_set(SCL);
+        DELAY(1);
+        i2c_set(SDA);
+        DELAY(1);
+}
+
+static void i2c_send_byte(unsigned char c)
+{
+    int i;
+    local_irq_disable();
+    for (i=0; i<8; i++)
+    {
+        DELAY(1);
+        i2c_clr(SCL);
+        DELAY(1);
+
+        if (c & (1<<(7-i)))
+            i2c_set(SDA);
+        else
+            i2c_clr(SDA);
+
+        DELAY(1);
+        i2c_set(SCL);
+        DELAY(1);
+        i2c_clr(SCL);
+    }
+    DELAY(1);
+	// i2c_set(SDA);
+    local_irq_enable();
+}
+
+static unsigned char i2c_receive_byte(void)
+{
+    int j=0;
+    int i;
+    unsigned char regvalue;
+
+    local_irq_disable();
+    for (i=0; i<8; i++)
+    {
+        DELAY(1);
+        i2c_clr(SCL);
+        DELAY(1);
+        i2c_set(SCL);
+        
+        regvalue = HW_REG(GPIO_SDA_DIR);
+        regvalue &= (~SDA);
+        HW_REG(GPIO_SDA_DIR) = regvalue;
+        DELAY(1);
+        
+        if (i2c_data_read())
+            j+=(1<<(7-i));
+
+        DELAY(1);
+        i2c_clr(SCL);
+    }
+    local_irq_enable();
+    DELAY(1);
+	// i2c_clr(SDA);
+	// DELAY(1);
+
+    return j;
+}
+
+static int i2c_receive_ack(void)
+{
+    int nack;
+    unsigned char regvalue;
+    
+    DELAY(1);
+    
+    regvalue = HW_REG(GPIO_SDA_DIR);
+    regvalue &= (~SDA);
+    HW_REG(GPIO_SDA_DIR) = regvalue;
+    
+    DELAY(1);
+    i2c_clr(SCL);
+    DELAY(1);
+    i2c_set(SCL);
+    DELAY(1);
+    
+    
+
+    nack = i2c_data_read();
+
+    DELAY(1);
+    i2c_clr(SCL);
+    DELAY(1);
+	//  i2c_set(SDA);
+	//  DELAY(1);
+
+    if (nack == 0)
+        return 1; 
+
+    return 0;
+}
+
+void i2c_send_ack(int ack)
+{
+    DELAY(1);
+    i2c_clr(SCL);
+    DELAY(1);
+    ack? i2c_set(SDA) : i2c_clr(SDA);
+    DELAY(1);
+    i2c_set(SCL);
+    DELAY(1);
+    i2c_clr(SCL);
+    DELAY(1);
+    i2c_clr(SDA);
+    DELAY(1);
+}
+
+unsigned char gpio_i2ctp_read(unsigned char devaddress, unsigned char addressh,unsigned char addressl)
+{
+
+	int rxdata;
+	int i;
+	spin_lock(&gpioi2c_lock);
+	devaddress &= 0xFE;
+	for(i = 0;i<16;i++)
+	{
+		i2c_set(SCL);  DELAY(2);
+		i2c_clr(SCL);  DELAY(2);
+	}
+
+	i2c_start_bit();
+	i2c_send_byte(devaddress);
+	i2c_receive_ack();
+
+	i2c_send_byte(addressh);
+    i2c_receive_ack();
+
+	i2c_send_byte(addressl);
+	i2c_receive_ack(); 
+
+	i2c_start_bit();
+	devaddress |= 0x01;
+	i2c_send_byte( devaddress );
+	i2c_receive_ack();
+	rxdata = i2c_receive_byte();
+	
+	i2c_send_ack(1);
+	i2c_stop_bit();
+
+	spin_unlock(&gpioi2c_lock);
+	return rxdata;
+}
+
+
+static void gpio_i2ctp_write(unsigned char devaddress, unsigned char addressh,unsigned char addressl, unsigned char data)
+{
+	int i;
+    spin_lock(&gpioi2c_lock);
+    devaddress &= 0xFE;
+	for(i = 0;i<16;i++)
+	{
+		i2c_set(SCL);  DELAY(2);
+		i2c_clr(SCL);  DELAY(2);
+	}
+
+    i2c_start_bit();
+    i2c_send_byte(devaddress);
+
+    i2c_receive_ack();
+    i2c_send_byte(addressh);
+
+    i2c_receive_ack();
+	i2c_send_byte(addressl);
+
+    i2c_receive_ack();
+    i2c_send_byte(data); 
+
+    i2c_stop_bit();
+
+   spin_unlock(&gpioi2c_lock);
+} 
+
+void gpio_i2ctp_read_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
+{
+	int i = 0;
+	spin_lock(&gpioi2c_lock);
+	devaddress &= 0xFE;
+	for(i = 0;i < 16; i++)
+	{
+		i2c_set(SCL);  DELAY(2);
+		i2c_clr(SCL);  DELAY(2);
+	}
+	i = 0;
+	i2c_start_bit();
+	i2c_send_byte(devaddress);
+	i2c_receive_ack();
+
+	i2c_send_byte(addressh);
+    i2c_receive_ack();
+
+
+	i2c_send_byte(addressl);
+	i2c_receive_ack(); 
+
+
+	i2c_start_bit();
+	devaddress |= 0x01;
+	i2c_send_byte( devaddress );
+	i2c_receive_ack();
+	do
+	{
+		buf[i] = i2c_receive_byte();
+	
+		size--;
+		if(size)
+			i2c_send_ack(0);
+		else
+			i2c_send_ack(1);
+		i++;
+	}while(size);
+
+	
+	i2c_stop_bit();
+
+	spin_unlock(&gpioi2c_lock);
+}
+
+
+void gpio_i2ctp_write_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
+{
+	int i= 0;
+
+    spin_lock(&gpioi2c_lock);
+	
+    devaddress &= 0xFE;
+	for(i = 0;i<16;i++)
+	{
+		i2c_set(SCL);  DELAY(2);
+		i2c_clr(SCL);  DELAY(2);
+	}
+	
+	i = 0;
+    i2c_start_bit();
+    i2c_send_byte(devaddress);
+
+    i2c_receive_ack();
+    i2c_send_byte(addressh);
+
+    i2c_receive_ack();
+	i2c_send_byte(addressl);
+
+	do{
+    	i2c_receive_ack();
+    	i2c_send_byte(buf[i++]); 
+	}while(--size);
+
+    i2c_stop_bit();
+
+	spin_unlock(&gpioi2c_lock);
+}
+
+#else 
+// Reserved for Linux common i2c interface
+void gpio_i2ctp_read_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
+{
+
+}	
+
+void gpio_i2ctp_write_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
+{
+
+}
+#endif
+
+// Reserved for far work
 static struct Tp_data
 {
 	int gpio; 
 	int irq;
 	int rep;
 	int res;
-};
+} tp_data;
 
-struct Tp_data tp_data ={
-	.gpio = 90,
-	.irq = 90,
-};
 static struct platform_device tp_device = {
 	.name	= "test1",
 	.id		= -1,
@@ -77,24 +494,12 @@ static const unsigned long goodix_irq_flags[] = {
 	IRQ_TYPE_LEVEL_LOW,
 	IRQ_TYPE_LEVEL_HIGH,
 };
-void gpio_i2ctp_read_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
-{
-	return;
-}
-void gpio_i2ctp_write_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
-{
-	return;
-}
 
 static int goodix_i2c_read(u8 addr,
 				u16 reg, u8 *buf, int len)
 {
 	gpio_i2ctp_read_buf(addr, reg>>8, reg&0xff, buf, len);
-#if 1
-	return 1;
-#else	
 	return len;
-#endif	
 }
 
 static int goodix_ts_read_input_report(struct goodix_ts_data *ts, u8 *data)
@@ -176,7 +581,7 @@ static void goodix_process_events(struct goodix_ts_data *ts)
  */
 static irqreturn_t goodix_ts_irq_handler(int irq, void *dev_id)
 {
-	static const u8 end_cmd[] = {
+	static u8 end_cmd[] = {
 		GOODIX_READ_COOR_ADDR >> 8,
 		GOODIX_READ_COOR_ADDR & 0xff,
 		0
@@ -310,7 +715,7 @@ static irqreturn_t i2c_tp_irq(int irq, void *data)
 static int goodix_ts_probe(struct platform_device *pdev)
 {
 	struct goodix_ts_data *ts;
-	unsigned long irq_flags;
+	//unsigned long irq_flags;
 	int error;
 	u16 version_info;
 
