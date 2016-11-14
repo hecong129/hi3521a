@@ -776,6 +776,27 @@ void goodix_int_config()
 {
 	u32 reg = 0;
 
+#if  1 //rising
+	 
+	reg = hi35xx_rd(0x121B0404);
+	reg &=~(1 << 7);
+	hi35xx_wr(0x121B0404,reg);
+		
+	reg = hi35xx_rd(0x121B040C);
+	reg &= ~(1 << 7);
+	hi35xx_wr(0x121B040C,reg);
+	
+	reg = hi35xx_rd(0x121B0408);
+	reg &=~(1 << 7);
+	hi35xx_wr(0x121B0408,reg);
+
+	reg = hi35xx_rd(0x121B0410);
+	reg |= (1 << 7);
+	hi35xx_wr(0x121B0410,reg);
+	
+	hi35xx_wr(0x121B041C,~0);
+#else
+	
 	reg = hi35xx_rd(0x121B0404);
 	reg &=~(1 << 7);
 	hi35xx_wr(0x121B0404,reg);
@@ -792,7 +813,7 @@ void goodix_int_config()
 	reg |= (1 << 7);
 	hi35xx_wr(0x121B0410,reg);
 	
-	hi35xx_wr(0x121B041C,~0);
+#endif	
 	
 }	
 
@@ -837,7 +858,7 @@ static int goodix_ts_probe(struct platform_device *pdev)
 		return error;
 	}
 
-	if(devm_request_threaded_irq(&tp_device.dev,90,NULL,&goodix_ts_irq_handler, 0 | IRQF_ONESHOT,"test1",ts))
+	if(devm_request_threaded_irq(&tp_device.dev,90,NULL,&goodix_ts_irq_handler, goodix_irq_flags[0] | IRQF_ONESHOT ,"test1",ts))
 	{
 		printk("request_irq error!\n");
 		return -1;
