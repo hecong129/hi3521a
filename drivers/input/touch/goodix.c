@@ -15,14 +15,18 @@
 #include <linux/slab.h>
 #include <asm/unaligned.h>
 
+#define MINI_TCH 1
+
 #define INF(fmt...) \
 	{ printk(KERN_INFO "%s %d",__FUNCTION__,__LINE__);\
 		printk(KERN_INFO fmt);}
 
+#define DBG(fmt...) \
+	{ printk(KERN_DEBUG "%s %d",__FUNCTION__,__LINE__);\
+		printk(KERN_INFO fmt);}
 
-#define		MINI_GPIO_I2C		1
+/* I2C Driver Code */
 
-#if MINI_GPIO_I2C
 #define GPIO_SCL_BASE				0x121B0000
 #define GPIO_SDA_BASE				0x121B0000
 #define SCL_SHIFT_NUM   			3
@@ -257,8 +261,6 @@ static int i2c_receive_ack(void)
     i2c_set(SCL);
     DELAY(1);
     
-    
-
     nack = i2c_data_read();
 
     DELAY(1);
@@ -350,7 +352,7 @@ static void gpio_i2ctp_write(unsigned char devaddress, unsigned char addressh,un
 
     i2c_stop_bit();
 
-   spin_unlock(&gpioi2c_lock);
+	spin_unlock(&gpioi2c_lock);
 } 
 
 void gpio_i2ctp_read_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
@@ -432,18 +434,22 @@ void gpio_i2ctp_write_buf(unsigned char devaddress, unsigned char addressh,unsig
 	spin_unlock(&gpioi2c_lock);
 }
 
-#else 
-// Reserved for Linux common i2c interface
-void gpio_i2ctp_read_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
+static const u8 gt911_table[186] = 
 {
-
-}	
-
-void gpio_i2ctp_write_buf(unsigned char devaddress, unsigned char addressh,unsigned char addressl,unsigned char *buf,int size)
-{
-
-}
-#endif
+									   0x51,0x00,0x04,0x58,0x02,0x05,0x0D,0x00,0x01,
+	0x0A,0x28,0x0F,0x50,0x32,0x03,0x05,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x87,0x28,0x0A,0x3C,0x3A,0x0C,0x08,0x00,0x00,0x00,0x22,0x02,0x2D,0x00,
+	0x01,0x00,0x00,0x00,0x03,0x64,0x32,0x00,0x00,0x00,0x23,0x64,0x94,0xC5,0x02,0x07,
+	0x00,0x00,0x04,0xB5,0x27,0x00,0x96,0x30,0x00,0x7E,0x3B,0x00,0x69,0x49,0x00,0x5A,
+	0x5A,0x00,0x5A,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x14,0x12,0x10,0x0E,0x0C,0x0A,0x08,0x06,0x04,
+	0x02,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x02,0x04,0x06,0x08,0x0A,0x0C,0x1D,0x1E,0x1F,0x20,
+	0x21,0x22,0x24,0x26,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xAD,
+	0x01
+};
 
 // Reserved for far work
 static struct Tp_data
@@ -499,7 +505,7 @@ static int goodix_i2c_read(u8 addr,
 				u16 reg, u8 *buf, int len)
 {
 	gpio_i2ctp_read_buf(addr, reg>>8, reg&0xff, buf, len);
-	return len;
+	return 0;
 }
 
 static int goodix_ts_read_input_report(struct goodix_ts_data *ts, u8 *data)
@@ -538,13 +544,24 @@ static void goodix_ts_report_touch(struct goodix_ts_data *ts, u8 *coor_data)
 	int input_x = get_unaligned_le16(&coor_data[1]);
 	int input_y = get_unaligned_le16(&coor_data[3]);
 	int input_w = get_unaligned_le16(&coor_data[5]);
+	static bak_input_x = 0;
+	static bak_input_y = 0;
 
+#if MINI_TCH
+	//	printk("pre x:%4X y:%4X w;%4X\n",input_x, input_y, input_w);
+		input_report_abs(ts->input_dev, ABS_X, input_x);
+		input_report_abs(ts->input_dev, ABS_Y, input_y);
+		input_report_key(ts->input_dev, BTN_TOUCH, 1);
+		input_sync(ts->input_dev);
+#else	
 	input_mt_slot(ts->input_dev, id);
 	input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, true);
 	input_report_abs(ts->input_dev, ABS_MT_POSITION_X, input_x);
 	input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, input_y);
 	input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, input_w);
 	input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, input_w);
+#endif
+
 }
 
 /**
@@ -563,14 +580,28 @@ static void goodix_process_events(struct goodix_ts_data *ts)
 
 	touch_num = goodix_ts_read_input_report(ts, point_data);
 	if (touch_num < 0)
+	{	
+		printk("irq:%d\n",touch_num);
 		return;
-
+	}
+//	printk("irq:%d\n",touch_num);
+#if MINI_TCH
+	if(touch_num)
+		goodix_ts_report_touch(ts,
+				&point_data[1 + GOODIX_CONTACT_SIZE * 0]);
+	else
+	{	
+		input_report_key(ts->input_dev, BTN_TOUCH, 0);
+		input_sync(ts->input_dev);
+	}	
+#else	
 	for (i = 0; i < touch_num; i++)
 		goodix_ts_report_touch(ts,
 				&point_data[1 + GOODIX_CONTACT_SIZE * i]);
-
 	input_mt_sync_frame(ts->input_dev);
 	input_sync(ts->input_dev);
+#endif
+
 }
 
 /**
@@ -586,12 +617,11 @@ static irqreturn_t goodix_ts_irq_handler(int irq, void *dev_id)
 		GOODIX_READ_COOR_ADDR & 0xff,
 		0
 	};
+	//printk("irq\n");
 	struct goodix_ts_data *ts = dev_id;
-
 	goodix_process_events(ts);
-
-	gpio_i2ctp_write_buf(DEVICE_ADDR, end_cmd[0],end_cmd[1],&end_cmd[2] ,1);
-
+	gpio_i2ctp_write(DEVICE_ADDR, end_cmd[0],end_cmd[1],end_cmd[2]);
+	hi35xx_wr(0x121B041C,~0);
 	return IRQ_HANDLED;
 }
 
@@ -634,8 +664,6 @@ static int goodix_read_version(u8 addr, u16 *version)
 	int error;
 	u8 buf[6];
 
-	return 0;
-
 	error = goodix_i2c_read(DEVICE_ADDR,GOODIX_REG_VERSION, buf, sizeof(buf));
 	if (error) {
 		INF("read version failed: %d\n", error);
@@ -669,8 +697,18 @@ static int goodix_request_input_dev(struct goodix_ts_data *ts)
 
 	ts->input_dev->evbit[0] = BIT_MASK(EV_SYN) |
 				  BIT_MASK(EV_KEY) |
-				  BIT_MASK(EV_ABS);
+				  BIT_MASK(EV_ABS) |
+				  BIT_MASK(EV_REP);
 
+	__set_bit(EV_REP,ts->input_dev->evbit);
+	ts->input_dev->keybit[BIT_WORD(BTN_TOUCH)] = BIT_MASK(BTN_TOUCH);
+
+#if MINI_TCH 
+
+	input_set_abs_params(ts->input_dev, ABS_X, 0, 0x3FFF, 0, 0);
+	input_set_abs_params(ts->input_dev, ABS_Y, 0, 0x3FFF, 0, 0);
+
+#else	
 	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0,
 				ts->abs_x_max, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0,
@@ -680,7 +718,7 @@ static int goodix_request_input_dev(struct goodix_ts_data *ts)
 
 	input_mt_init_slots(ts->input_dev, GOODIX_MAX_CONTACTS,
 			    INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
-
+#endif
 	ts->input_dev->name = "Goodix Capacitive TouchScreen";
 	ts->input_dev->phys = "input/ts";
 	ts->input_dev->id.bustype = BUS_I2C;
@@ -697,28 +735,74 @@ static int goodix_request_input_dev(struct goodix_ts_data *ts)
 	return 0;
 }
 
-static irqreturn_t i2c_tp_irq(int irq, void *data)
-{ 
-	//int *id = (int *)data;
-	//printk("now is high?%d\n",(HW_REG(0x121B03FC) & (1<<5)));
-	/*if(*id!= 9527)
-	{
-		return 0;
-	}*/
-	printk("\n 0000 request_irq !\n");
-//	condition = 1; 
-	//wake_up_interruptible(&interrupt_wait);
+void goodix_i2c_init(void)	
+{	
+    *((volatile unsigned int *)IO_ADDRESS(0x120F0000 + 0x0F0)) = 0x1;//GPIO6_2
+    *((volatile unsigned int *)IO_ADDRESS(0x120F0000 + 0x0F4)) = 0x1;//GPIO6_3
+	i2c_set(SCL | SDA); 
+    spin_lock_init(&gpioi2c_lock);
+}	
 
-	return 0;
+void goodix_gpio_config(void)
+{
+	u32 reg = 0;
+
+	hi35xx_wr(0x121B0000 + (1 << 7),0);	
+	reg = hi35xx_rd(0x121B0400);
+	reg |= (1 << 7);
+	hi35xx_wr(0x121B0400,reg);
+	hi35xx_wr(0x121B0000 + (1 << 9),0); 
+	msleep(2);
+	hi35xx_wr(0x121B0000 + (1 << 7),(1 <<5));
+	msleep(40);
+	reg = hi35xx_rd(0x121B0400);
+	reg &=~(1 << 7);
+	hi35xx_wr(0x121B0400,reg);
+	msleep(60);
 }
+
+void goodix_write_config(void)
+{
+	int i = 0;
+	u16 reg = 0x8047;
+	for(i=0; i<186; i++)
+	{
+		gpio_i2ctp_write(0xbB, reg>>8,reg&0xff,gt911_table[i]);
+		reg++;
+	}
+}	
+
+void goodix_int_config()
+{
+	u32 reg = 0;
+
+	reg = hi35xx_rd(0x121B0404);
+	reg &=~(1 << 7);
+	hi35xx_wr(0x121B0404,reg);
+		
+	reg = hi35xx_rd(0x121B040C);
+	reg |= (1 << 7);
+	hi35xx_wr(0x121B040C,reg);
+	
+	reg = hi35xx_rd(0x121B0408);
+	reg &=~(1 << 7);
+	hi35xx_wr(0x121B0408,reg);
+
+	reg = hi35xx_rd(0x121B0410);
+	reg |= (1 << 7);
+	hi35xx_wr(0x121B0410,reg);
+	
+	hi35xx_wr(0x121B041C,~0);
+	
+}	
 
 static int goodix_ts_probe(struct platform_device *pdev)
 {
 	struct goodix_ts_data *ts;
-	//unsigned long irq_flags;
+	
 	int error;
 	u16 version_info;
-
+	u32 reg =0;
 	struct Tp_data *pdata = pdev->dev.platform_data;
 
 	INF("probe here.\n");
@@ -732,12 +816,18 @@ static int goodix_ts_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, pdata);
 
+	goodix_i2c_init();
+
+	goodix_gpio_config();
+
+	goodix_write_config();
+
 	error = goodix_read_version(DEVICE_ADDR, &version_info);
 	if (error) {
 		INF("Read version failed.\n");
 		return error;
 	}
-
+	
 	goodix_read_config(ts);
 
 	error = goodix_request_input_dev(ts);
@@ -747,24 +837,15 @@ static int goodix_ts_probe(struct platform_device *pdev)
 		return error;
 	}
 
-	/*
-	ts->int_trigger_type = 2;		
-	irq_flags = goodix_irq_flags[ts->int_trigger_type] | IRQF_ONESHOT;
-	error = devm_request_irq(pdev, 90,
-					  goodix_ts_irq_handler,
-					  irq_flags, "test1", ts);
-	if (error) {
-		INF("request IRQ failed: %d\n", error);
-		return error;
-	}
-	*/
-
-	if(devm_request_irq(&tp_device.dev,90,&goodix_ts_irq_handler,IRQ_TYPE_EDGE_RISING | IRQF_ONESHOT,"test1",ts))
+	if(devm_request_threaded_irq(&tp_device.dev,90,NULL,&goodix_ts_irq_handler, 0 | IRQF_ONESHOT,"test1",ts))
 	{
 		printk("request_irq error!\n");
 		return -1;
 	}
 	printk("request_irq ok!\n");
+	
+	goodix_int_config();
+	
 		
 	return 0;
 }
@@ -801,7 +882,6 @@ static int __init hitp_init(void)
 	return 0;
 
 }
-/*****************************************************************************/
 
 static void __exit hitp_exit(void)
 {
