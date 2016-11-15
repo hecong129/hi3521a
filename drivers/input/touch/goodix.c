@@ -451,7 +451,7 @@ static const u8 gt911_table[186] =
 	0x01
 };
 
-// Reserved for far work
+// Reserved for far work 
 static struct Tp_data
 {
 	int gpio; 
@@ -460,8 +460,8 @@ static struct Tp_data
 	int res;
 } tp_data;
 
-static struct platform_device tp_device = {
-	.name	= "test1",
+static struct platform_device gt911_device = {
+	.name	= "gt911",
 	.id		= -1,
 	.dev	= {
 		.platform_data = &tp_data,
@@ -522,8 +522,10 @@ static int goodix_ts_read_input_report(struct goodix_ts_data *ts, u8 *data)
 
 	touch_num = data[0] & 0x0f;
 	if (touch_num > GOODIX_MAX_CONTACTS)
+	{	
+		INF("I2C io error: \n");
 		return -EPROTO;
-
+	}
 	if (touch_num > 1) {
 		data += 1 + GOODIX_CONTACT_SIZE;
 		error = goodix_i2c_read(DEVICE_ADDR,
@@ -544,15 +546,13 @@ static void goodix_ts_report_touch(struct goodix_ts_data *ts, u8 *coor_data)
 	int input_x = get_unaligned_le16(&coor_data[1]);
 	int input_y = get_unaligned_le16(&coor_data[3]);
 	int input_w = get_unaligned_le16(&coor_data[5]);
-	static bak_input_x = 0;
-	static bak_input_y = 0;
 
 #if MINI_TCH
 	//	printk("pre x:%4X y:%4X w;%4X\n",input_x, input_y, input_w);
-		input_report_abs(ts->input_dev, ABS_X, input_x);
-		input_report_abs(ts->input_dev, ABS_Y, input_y);
-		input_report_key(ts->input_dev, BTN_TOUCH, 1);
-		input_sync(ts->input_dev);
+	input_report_abs(ts->input_dev, ABS_X, input_x);
+	input_report_abs(ts->input_dev, ABS_Y, input_y);
+	input_report_key(ts->input_dev, BTN_TOUCH, 1);
+	input_sync(ts->input_dev);
 #else	
 	input_mt_slot(ts->input_dev, id);
 	input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, true);
@@ -663,6 +663,7 @@ static int goodix_read_version(u8 addr, u16 *version)
 {
 	int error;
 	u8 buf[6];
+	int i,sum;
 
 	error = goodix_i2c_read(DEVICE_ADDR,GOODIX_REG_VERSION, buf, sizeof(buf));
 	if (error) {
@@ -672,6 +673,16 @@ static int goodix_read_version(u8 addr, u16 *version)
 
 	if (version)
 		*version = get_unaligned_le16(&buf[4]);
+	
+	sum = 0;
+	for(i=0; i<6; i++)
+	{
+		sum=sum+buf[i];
+	}
+	if((sum==0) || (sum== 0xff*6))
+	{
+		INF("GET IC VERSION Error : check i2c io\n");
+	}	
 
 	INF("IC VERSION: %6ph\n", buf);
 
@@ -719,7 +730,7 @@ static int goodix_request_input_dev(struct goodix_ts_data *ts)
 	input_mt_init_slots(ts->input_dev, GOODIX_MAX_CONTACTS,
 			    INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
 #endif
-	ts->input_dev->name = "Goodix Capacitive TouchScreen";
+	ts->input_dev->name = "Goodix GT911 TouchScreen";
 	ts->input_dev->phys = "input/ts";
 	ts->input_dev->id.bustype = BUS_I2C;
 	ts->input_dev->id.vendor = 0x0416;
@@ -817,6 +828,14 @@ void goodix_int_config()
 	
 }	
 
+static int goodix_ts_remove(struct platform_device *pdev)
+{
+	struct goodix_ts_data *ts;
+
+	ts = container_of(pdev,struct goodix_ts_data, dev);
+	devm_kfree(&pdev->dev, ts);
+}
+
 static int goodix_ts_probe(struct platform_device *pdev)
 {
 	struct goodix_ts_data *ts;
@@ -841,13 +860,14 @@ static int goodix_ts_probe(struct platform_device *pdev)
 
 	goodix_gpio_config();
 
-	goodix_write_config();
-
+	// check product version id 
 	error = goodix_read_version(DEVICE_ADDR, &version_info);
 	if (error) {
 		INF("Read version failed.\n");
 		return error;
 	}
+	
+	goodix_write_config();
 	
 	goodix_read_config(ts);
 
@@ -858,61 +878,60 @@ static int goodix_ts_probe(struct platform_device *pdev)
 		return error;
 	}
 
-	if(devm_request_threaded_irq(&tp_device.dev,90,NULL,&goodix_ts_irq_handler, goodix_irq_flags[0] | IRQF_ONESHOT ,"test1",ts))
+	if(devm_request_threaded_irq(&gt911_device.dev,90,NULL,&goodix_ts_irq_handler, goodix_irq_flags[0] | IRQF_ONESHOT ,"gt911",ts))
 	{
-		printk("request_irq error!\n");
+		INF("request_irq error!\n");
 		return -1;
 	}
-	printk("request_irq ok!\n");
+	DBG("request_irq ok!\n");
 	
 	goodix_int_config();
-	
 		
 	return 0;
 }
 
-static struct platform_driver test_driver = {
+static struct platform_driver gt911_driver = {
 	.probe = goodix_ts_probe,
+	.remove = goodix_ts_remove,
 	.driver   = {
-		.name = "test1",
+		.name = "gt911",
 		.owner = THIS_MODULE,
 	},
 };
 
-static int __init hitp_init(void)
+static int __init gt911_init(void)
 {
 	int ret;
 
-	INF("here ok.\n");
-	ret = platform_device_register(&tp_device);
+	INF("init here.\n");
+	ret = platform_device_register(&gt911_device);
 	if (ret) {
-		pr_err("device register fail.\n");
+		INF("device register fail.\n");
 		return ret;
 	}
 	
-	pr_err("device register ok.\n");
+	DBG("device register ok.\n");
 	
-	ret = platform_driver_register(&test_driver);
+	ret = platform_driver_register(&gt911_driver);
 	if (ret) {
-		pr_err("device driver fail.\n");
+		INF("device driver fail.\n");
 		return ret;
 	}
 	
-	pr_err("device driver ok.\n");
+	DBG("device driver ok.\n");
 	
 	return 0;
-
 }
 
-static void __exit hitp_exit(void)
+static void __exit gt911_exit(void)
 {
-	INF( "exit ok.\n");
-	platform_driver_unregister(&test_driver);
-	platform_device_unregister(&tp_device);
+	INF( "exit here .\n");
+	platform_driver_unregister(&gt911_driver);
+	platform_device_unregister(&gt911_device);
 }
 
-module_init(hitp_init);
-module_exit(hitp_exit);
+module_init(gt911_init);
+module_exit(gt911_exit);
 
 MODULE_AUTHOR("hecong cong.he@qualvision.cn");
 MODULE_DESCRIPTION("GT911 Touch Screen Driver");
