@@ -756,7 +756,7 @@ static int __init gpio_i2c_init(void)
 	
 	// GPIO6_5 Reset
 	// GPIO6_7 Int
-	 	    hi35xx_wr(0x121B0000 + (1 << 7),0);	//Reset 0
+	    hi35xx_wr(0x121B0000 + (1 << 7),0);	//Reset 0
 	
 
 		reg = hi35xx_rd(0x121B0400);
@@ -777,7 +777,7 @@ static int __init gpio_i2c_init(void)
 
 
 
-		gpio_i2ctp_write(0xbB, 0x80,0x4d,0xd);
+		gpio_i2ctp_write(0xbB, 0x80,0x4d,0xc);
 		msleep(700);
 		printk("\n----02----gpio setting !\n");
 	
@@ -820,7 +820,8 @@ static int __init gpio_i2c_init(void)
 		
 		
 		reg = hi35xx_rd(0x121B040C);
-		reg |= (1 << 7);
+		//reg |= (1 << 7);
+		reg &=~(1 << 7);
 		hi35xx_wr(0x121B040C,reg);
 		
 		reg = hi35xx_rd(0x121B0408);

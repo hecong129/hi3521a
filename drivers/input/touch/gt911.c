@@ -551,7 +551,6 @@ static void goodix_ts_report_touch(struct goodix_ts_data *ts, u8 *coor_data)
 	//	printk("pre x:%4X y:%4X w;%4X\n",input_x, input_y, input_w);
 	input_report_abs(ts->input_dev, ABS_X, input_x);
 	input_report_abs(ts->input_dev, ABS_Y, input_y);
-	input_report_abs(ts->input_dev, ABS_PRESSURE, 1);
 	input_report_key(ts->input_dev, BTN_TOUCH, 1);
 	input_sync(ts->input_dev);
 #else	
@@ -582,17 +581,16 @@ static void goodix_process_events(struct goodix_ts_data *ts)
 	touch_num = goodix_ts_read_input_report(ts, point_data);
 	if (touch_num < 0)
 	{	
-		printk("irq:%d\n",touch_num);
+		INF("irq:%d\n",touch_num);
 		return;
 	}
-//	printk("irq:%d\n",touch_num);
+	//printk("irq:%d\n",touch_num);
 #if MINI_TCH
-	if(touch_num)
+	if(touch_num) //press
 		goodix_ts_report_touch(ts,
 				&point_data[1 + GOODIX_CONTACT_SIZE * 0]);
-	else
+	else //realse
 	{	
-		input_report_abs(ts->input_dev, ABS_PRESSURE, 0);
 		input_report_key(ts->input_dev, BTN_TOUCH, 0);
 		input_sync(ts->input_dev);
 	}	
@@ -619,6 +617,7 @@ static irqreturn_t goodix_ts_irq_handler(int irq, void *dev_id)
 		GOODIX_READ_COOR_ADDR & 0xff,
 		0
 	};
+	DBG("irq \n");
 	struct goodix_ts_data *ts = dev_id;
 	goodix_process_events(ts);
 	gpio_i2ctp_write(DEVICE_ADDR, end_cmd[0],end_cmd[1],end_cmd[2]);
@@ -714,14 +713,11 @@ static int goodix_request_input_dev(struct goodix_ts_data *ts)
 
 	__set_bit(EV_REP,ts->input_dev->evbit);
 	ts->input_dev->keybit[BIT_WORD(BTN_TOUCH)] = BIT_MASK(BTN_TOUCH);
-	__set_bit(ABS_PRESSURE,ts->input_dev->absbit);
 
 #if MINI_TCH 
-	
+
 	input_set_abs_params(ts->input_dev, ABS_X, 0, 0x3FFF, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_Y, 0, 0x3FFF, 0, 0);
-	input_set_abs_params(ts->input_dev, ABS_PRESSURE, 0, 1, 0, 0);
-
 #else	
 	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0,
 				ts->abs_x_max, 0, 0);
@@ -757,10 +753,13 @@ void goodix_i2c_init(void)
     spin_lock_init(&gpioi2c_lock);
 }	
 
+#define GPIO_RESET_BASE  0x121B0000
+#define GPIO_INT_BASE  0x121B0000
+
 void goodix_gpio_config(void)
 {
 	u32 reg = 0;
-
+#if 0
 	hi35xx_wr(0x121B0000 + (1 << 7),0);	
 	reg = hi35xx_rd(0x121B0400);
 	reg |= (1 << 7);
@@ -773,24 +772,44 @@ void goodix_gpio_config(void)
 	reg &=~(1 << 7);
 	hi35xx_wr(0x121B0400,reg);
 	msleep(60);
+#else
+	hi35xx_wr(GPIO_RESET_BASE + (1 << 7),0);	
+	
+	reg = hi35xx_rd(GPIO_INT_BASE + 0x400);
+	reg |= (1 << 7);
+	hi35xx_wr(GPIO_INT_BASE+0x400,reg);
+	
+	hi35xx_wr(GPIO_INT_BASE + (1 << 9),0); 
+	msleep(2);
+	
+	hi35xx_wr(GPIO_RESET_BASE + (1 << 7),(1 <<5));
+	msleep(40);
+
+	reg = hi35xx_rd(GPIO_INT_BASE +0x400);
+	reg &=~(1 << 7);
+	hi35xx_wr(GPIO_INT_BASE+0x400,reg);
+	msleep(60);
+#endif	
 }
 
 void goodix_write_config(void)
 {
 	int i = 0;
-	u16 reg = 0x8047;
-	for(i=0; i<186; i++)
+	u16 reg = GOODIX_REG_CONFIG_DATA;
+
+	for(i=0; i<sizeof(gt911_table); i++)
 	{
-		gpio_i2ctp_write(0xbB, reg>>8,reg&0xff,gt911_table[i]);
+		gpio_i2ctp_write(DEVICE_ADDR, reg>>8,reg&0xff,gt911_table[i]);
 		reg++;
 	}
 }	
+
 
 void goodix_int_config()
 {
 	u32 reg = 0;
 
-#if  1 //falling
+#if  1 //rising
 	 
 	reg = hi35xx_rd(0x121B0404);
 	reg &=~(1 << 7);
@@ -827,8 +846,6 @@ void goodix_int_config()
 	reg |= (1 << 7);
 	hi35xx_wr(0x121B0410,reg);
 	
-	hi35xx_wr(0x121B041C,~0);
-	
 #endif	
 	
 }	
@@ -838,6 +855,8 @@ static int goodix_ts_remove(struct platform_device *pdev)
 	struct goodix_ts_data *ts;
 
 	ts = container_of(pdev,struct goodix_ts_data, dev);
+	input_unregister_device(ts->input_dev);	
+	devm_free_irq(&gt911_device.dev,90,ts);
 	devm_kfree(&pdev->dev, ts);
 }
 
@@ -865,7 +884,7 @@ static int goodix_ts_probe(struct platform_device *pdev)
 
 	goodix_gpio_config();
 
-	// check product version id 
+	//product version  id 
 	error = goodix_read_version(DEVICE_ADDR, &version_info);
 	if (error) {
 		INF("Read version failed.\n");
